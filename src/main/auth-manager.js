@@ -211,6 +211,53 @@ class AuthManager {
     isLoggedIn() { return !!this.token && !!this.user; }
     getUser() { return this.user; }
     getVpnConfig() { return this.vpnConfig; }
-}
 
+    /**
+     * Fetch current usage data from server
+     */
+    async fetchUsage() {
+        if (!this.token) return null;
+
+        return new Promise((resolve) => {
+            const url = new URL(`${API_BASE}/api/client/usage`);
+            const transport = url.protocol === 'https:' ? https : http;
+
+            const req = transport.request({
+                hostname: url.hostname,
+                port: url.port,
+                path: url.pathname,
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${this.token}` },
+            }, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    try {
+                        if (res.statusCode === 200) {
+                            const json = JSON.parse(data);
+                            // Update user object with latest usage data
+                            if (this.user) {
+                                this.user.period_usage = json.period_usage;
+                                this.user.current_usage = json.current_usage;
+                                this.user.data_limit = json.data_limit;
+                                this.user.data_limit_period = json.data_limit_period;
+                                this.user.period_reset_at = json.period_reset_at;
+                                this.user.active = json.active;
+                                this.user.speed_limit = json.speed_limit;
+                            }
+                            resolve(json);
+                        } else {
+                            resolve(null);
+                        }
+                    } catch (e) {
+                        resolve(null);
+                    }
+                });
+            });
+
+            req.on('error', () => resolve(null));
+            req.end();
+        });
+    }
+}
 module.exports = AuthManager;

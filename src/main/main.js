@@ -11,6 +11,7 @@ let tray;
 let xrayManager;
 let proxySettings;
 let authManager;
+let usagePollInterval = null;
 
 // Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -85,7 +86,7 @@ function createTray() {
     try {
         tray = new Tray(trayIcon);
         const contextMenu = Menu.buildFromTemplate([
-            { label: 'MEB VPN v1.0', enabled: false },
+            { label: 'MEB VPN v1.1', enabled: false },
             { type: 'separator' },
             { label: 'Göster', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
             { type: 'separator' },
@@ -109,12 +110,27 @@ async function handleConnect() {
         return { success: false, error: 'Not logged in' };
     }
 
+    // Check usage before connecting
+    try {
+        const usage = await authManager.fetchUsage();
+        if (usage && (usage.limit_exceeded || !usage.active)) {
+            if (mainWindow) {
+                mainWindow.webContents.send('limit-exceeded', 'Veri limitiniz doldu! Bağlantı kurulamaz.');
+                mainWindow.webContents.send('usage-update', usage);
+            }
+            return { success: false, error: 'Veri limitiniz doldu!' };
+        }
+    } catch (e) {
+        console.error('Usage check failed:', e.message);
+    }
+
     try {
         if (mainWindow) mainWindow.webContents.send('connection-status', 'connecting');
         xrayManager.setVpnConfig(authManager.getVpnConfig());
         await xrayManager.start();
         await proxySettings.enable('127.0.0.1', 10808);
         if (mainWindow) mainWindow.webContents.send('connection-status', 'connected');
+        startUsagePolling();
         return { success: true };
     } catch (error) {
         if (mainWindow) {
@@ -126,6 +142,7 @@ async function handleConnect() {
 }
 
 async function handleDisconnect() {
+    stopUsagePolling();
     try {
         await proxySettings.disable();
         await xrayManager.stop();
@@ -133,6 +150,38 @@ async function handleDisconnect() {
         return { success: true };
     } catch (error) {
         return { success: false, error: error.message };
+    }
+}
+
+function startUsagePolling() {
+    stopUsagePolling();
+    usagePollInterval = setInterval(async () => {
+        if (!authManager.isLoggedIn()) return;
+        try {
+            const usage = await authManager.fetchUsage();
+            if (!usage) return;
+
+            // Send usage update to renderer
+            if (mainWindow) mainWindow.webContents.send('usage-update', usage);
+
+            // Check if limit exceeded or user deactivated
+            if (usage.limit_exceeded || !usage.active) {
+                console.log('Data limit exceeded, disconnecting...');
+                if (mainWindow) {
+                    mainWindow.webContents.send('limit-exceeded', 'Veri limitiniz doldu! Bağlantı kesildi.');
+                }
+                await handleDisconnect();
+            }
+        } catch (e) {
+            console.error('Usage poll error:', e.message);
+        }
+    }, 10000); // Check every 10 seconds
+}
+
+function stopUsagePolling() {
+    if (usagePollInterval) {
+        clearInterval(usagePollInterval);
+        usagePollInterval = null;
     }
 }
 
@@ -191,6 +240,12 @@ app.whenReady().then(async () => {
         connected: xrayManager.isRunning(),
         uptime: xrayManager.getUptime(),
     }));
+
+    // IPC: Usage
+    ipcMain.handle('usage:refresh', async () => {
+        const usage = await authManager.fetchUsage();
+        return usage;
+    });
 
     // IPC: Window
     ipcMain.handle('window:minimize', () => { if (mainWindow) mainWindow.minimize(); });

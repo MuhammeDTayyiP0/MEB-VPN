@@ -28,4 +28,11 @@ contextBridge.exposeInMainWorld('mebAPI', {
     onTrafficUpdate: (callback) => {
         ipcRenderer.on('traffic-update', (event, data) => callback(data));
     },
+    onLimitExceeded: (callback) => {
+        ipcRenderer.on('limit-exceeded', (event, message) => callback(message));
+    },
+    onUsageUpdate: (callback) => {
+        ipcRenderer.on('usage-update', (event, data) => callback(data));
+    },
+    refreshUsage: () => ipcRenderer.invoke('usage:refresh'),
 });

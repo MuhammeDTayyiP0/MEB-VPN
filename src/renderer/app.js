@@ -4,6 +4,7 @@ class MEBVPNApp {
     constructor() {
         this.isConnected = false;
         this.isConnecting = false;
+        this.limitExceeded = false;
         this.connectionStartTime = null;
         this.timerInterval = null;
         this.particleInterval = null;
@@ -84,6 +85,16 @@ class MEBVPNApp {
 
         window.mebAPI.onTrafficUpdate((data) => this.updateTrafficUI(data));
         window.mebAPI.onConnectionError((error) => this.showError(error));
+
+        window.mebAPI.onLimitExceeded((message) => {
+            this.limitExceeded = true;
+            this.showLimitExceededWarning(message);
+            this.setDisconnectedState();
+        });
+
+        window.mebAPI.onUsageUpdate((data) => {
+            this.updateUsageFromServer(data);
+        });
     }
 
     // ========== AUTH ==========
@@ -179,6 +190,12 @@ class MEBVPNApp {
     // ========== VPN CONNECTION ==========
     async toggleConnection() {
         if (this.isConnecting) return;
+
+        if (this.limitExceeded && !this.isConnected) {
+            this.showLimitExceededWarning('Veri limitiniz doldu! Bağlantı kurulamaz.');
+            return;
+        }
+
         this.triggerRipple();
 
         if (this.isConnected) {
@@ -359,6 +376,43 @@ class MEBVPNApp {
 
     hideError() {
         this.errorContainer.style.display = 'none';
+    }
+
+    // ========== LIMIT EXCEEDED ==========
+    showLimitExceededWarning(message) {
+        this.errorText.textContent = message;
+        this.errorContainer.style.display = 'block';
+        this.errorContainer.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+        this.errorContainer.style.background = 'rgba(245, 158, 11, 0.15)';
+        this.errorContainer.style.color = '#f59e0b';
+        // Don't auto-hide limit exceeded warning
+    }
+
+    // ========== SERVER USAGE UPDATE ==========
+    updateUsageFromServer(data) {
+        if (!this.user) return;
+
+        // Update local user data
+        this.user.period_usage = data.period_usage;
+        this.user.current_usage = data.current_usage;
+        this.user.data_limit = data.data_limit;
+        this.user.data_limit_period = data.data_limit_period;
+        this.user.period_reset_at = data.period_reset_at;
+        this.user.active = data.active;
+        this.user.speed_limit = data.speed_limit;
+
+        // Check if limit was cleared (e.g. period reset)
+        if (!data.limit_exceeded && data.active) {
+            this.limitExceeded = false;
+            this.hideError();
+            // Reset error container style
+            this.errorContainer.style.borderColor = '';
+            this.errorContainer.style.background = '';
+            this.errorContainer.style.color = '';
+        }
+
+        // Refresh UI
+        this.updateUserUI();
     }
 }
 
