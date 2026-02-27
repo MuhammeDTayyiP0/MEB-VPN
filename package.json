@@ -9,7 +9,7 @@
         "build:linux": "electron-builder --linux --publish never",
         "build:all": "electron-builder --win --linux --publish never"
     },
-    "author": "MEB VPN",
+    "author": "MEB VPN <info@mebvpn.com>",
     "license": "MIT",
     "devDependencies": {
         "electron": "^28.1.0",
