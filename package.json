@@ -1,0 +1,83 @@
+{
+    "name": "meb-vpn",
+    "version": "1.0.0",
+    "description": "MEB VPN - Güvenli VPN İstemcisi",
+    "main": "src/main/main.js",
+    "scripts": {
+        "dev": "electron .",
+        "build:win": "electron-builder --win",
+        "build:linux": "electron-builder --linux",
+        "build:all": "electron-builder --win --linux"
+    },
+    "author": "MEB VPN",
+    "license": "MIT",
+    "devDependencies": {
+        "electron": "^28.1.0",
+        "electron-builder": "^24.9.1"
+    },
+    "build": {
+        "appId": "com.meb.vpn",
+        "productName": "MEB VPN",
+        "directories": {
+            "output": "dist"
+        },
+        "files": [
+            "src/**/*",
+            "config.json",
+            "!resources/xray/**"
+        ],
+        "extraResources": [
+            {
+                "from": "resources/xray",
+                "to": "xray",
+                "filter": [
+                    "**/*"
+                ]
+            }
+        ],
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "resources/icon.png"
+        },
+        "nsis": {
+            "oneClick": false,
+            "perMachine": true,
+            "allowToChangeInstallationDirectory": true,
+            "installerIcon": "resources/icon.png",
+            "uninstallerIcon": "resources/icon.png",
+            "installerHeaderIcon": "resources/icon.png",
+            "createDesktopShortcut": true,
+            "createStartMenuShortcut": true,
+            "shortcutName": "MEB VPN"
+        },
+        "linux": {
+            "target": [
+                "AppImage",
+                "deb"
+            ],
+            "category": "Network",
+            "icon": "resources/icon.png",
+            "desktop": {
+                "Name": "MEB VPN",
+                "Comment": "Güvenli VPN İstemcisi",
+                "Categories": "Network;VPN;Security"
+            }
+        },
+        "deb": {
+            "depends": [
+                "libgtk-3-0",
+                "libnotify4",
+                "libnss3",
+                "libxss1",
+                "libxtst6"
+            ]
+        }
+    }
+}

@@ -1,0 +1,119 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Xray (Windows)
+        run: |
+          mkdir -p resources/xray
+          curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip
+          Expand-Archive xray.zip -DestinationPath resources/xray
+          Remove-Item xray.zip
+
+      - name: Build Windows
+        run: npm run build:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/*.exe
+
+  build-linux:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Xray (Linux)
+        run: |
+          mkdir -p resources/xray
+          curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip xray.zip -d resources/xray
+          chmod +x resources/xray/xray
+          rm xray.zip
+
+      - name: Build Linux
+        run: npm run build:linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows Build
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+          path: dist/
+
+      - name: Download Linux Build
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MEB VPN ${{ github.ref_name }}
+          body: |
+            ## MEB VPN ${{ github.ref_name }}
+
+            ### İndirme
+            | Platform | Dosya |
+            |----------|-------|
+            | Windows | `MEB VPN Setup *.exe` |
+            | Linux (Pardus/Ubuntu/Debian) | `*.deb` |
+            | Linux (Portable) | `*.AppImage` |
+
+            ### Kurulum
+            - **Windows**: Setup.exe'yi çalıştırın
+            - **Linux .deb**: `sudo dpkg -i meb-vpn_*.deb`
+            - **Linux AppImage**: `chmod +x *.AppImage && ./*.AppImage`
+          files: |
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

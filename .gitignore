@@ -1,0 +1,5 @@
+node_modules/
+dist/
+resources/xray/
+*.exe
+auth.json
