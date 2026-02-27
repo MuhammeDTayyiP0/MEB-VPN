@@ -113,14 +113,21 @@ async function handleConnect() {
     // Check usage before connecting
     try {
         const usage = await authManager.fetchUsage();
-        if (usage && (usage.limit_exceeded || !usage.active)) {
+        if (usage && usage.limit_exceeded) {
             if (mainWindow) {
                 mainWindow.webContents.send('limit-exceeded', 'Veri limitiniz doldu! Bağlantı kurulamaz.');
                 mainWindow.webContents.send('usage-update', usage);
             }
             return { success: false, error: 'Veri limitiniz doldu!' };
         }
+        if (usage && !usage.active) {
+            if (mainWindow) {
+                mainWindow.webContents.send('connection-error', 'Hesabınız devre dışı. Lütfen yöneticiyle iletişime geçin.');
+            }
+            return { success: false, error: 'Hesap devre dışı' };
+        }
     } catch (e) {
+        // If usage check fails (e.g. no internet), allow connection attempt
         console.error('Usage check failed:', e.message);
     }
 
@@ -164,11 +171,19 @@ function startUsagePolling() {
             // Send usage update to renderer
             if (mainWindow) mainWindow.webContents.send('usage-update', usage);
 
-            // Check if limit exceeded or user deactivated
-            if (usage.limit_exceeded || !usage.active) {
+            // Check if limit exceeded
+            if (usage.limit_exceeded) {
                 console.log('Data limit exceeded, disconnecting...');
                 if (mainWindow) {
                     mainWindow.webContents.send('limit-exceeded', 'Veri limitiniz doldu! Bağlantı kesildi.');
+                }
+                await handleDisconnect();
+            }
+            // Check if account deactivated by admin
+            else if (!usage.active) {
+                console.log('Account deactivated, disconnecting...');
+                if (mainWindow) {
+                    mainWindow.webContents.send('connection-error', 'Hesabınız devre dışı bırakıldı.');
                 }
                 await handleDisconnect();
             }
