@@ -190,7 +190,7 @@ function startUsagePolling() {
         } catch (e) {
             console.error('Usage poll error:', e.message);
         }
-    }, 10000); // Check every 10 seconds
+    }, 2000); // Check every 2 seconds
 }
 
 function stopUsagePolling() {

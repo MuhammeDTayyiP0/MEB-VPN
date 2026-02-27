@@ -162,18 +162,31 @@ class MEBVPNApp {
 
         const periodLabels = { none: '', daily: '/gün', weekly: '/hafta', monthly: '/ay' };
         const period = this.user.data_limit_period || 'none';
-        const limitMB = Math.round(this.user.data_limit * 1024);
+        const isUnlimited = !this.user.data_limit || this.user.data_limit <= 0;
         const suffix = periodLabels[period] || '';
-        this.planLimit.textContent = `${limitMB} MB${suffix} • ${this.user.speed_limit} Mbps`;
+        const speedStr = (this.user.speed_limit && this.user.speed_limit > 0) ? `${this.user.speed_limit} Mbps` : 'Sınırsız';
+
+        if (isUnlimited) {
+            this.planLimit.textContent = `Sınırsız${suffix} • ${speedStr}`;
+        } else {
+            const limitMB = Math.round(this.user.data_limit * 1024);
+            this.planLimit.textContent = `${limitMB} MB${suffix} • ${speedStr}`;
+        }
 
         // Usage bar
         const usageMB = Math.round((this.user.period_usage || 0) / (1024 * 1024));
-        this.usageText.textContent = `${usageMB} MB / ${limitMB} MB`;
-        const pct = this.user.data_limit > 0 ? Math.min(100, (this.user.period_usage || 0) / (this.user.data_limit * 1024 * 1024 * 1024) * 100) : 0;
-        this.usageFill.style.width = `${pct}%`;
+        if (isUnlimited) {
+            this.usageText.textContent = `${usageMB} MB / Sınırsız`;
+            this.usageFill.style.width = '0%';
+        } else {
+            const limitMB = Math.round(this.user.data_limit * 1024);
+            this.usageText.textContent = `${usageMB} MB / ${limitMB} MB`;
+            const pct = Math.min(100, (this.user.period_usage || 0) / (this.user.data_limit * 1024 * 1024 * 1024) * 100);
+            this.usageFill.style.width = `${pct}%`;
+        }
 
         // Reset countdown
-        if (this.user.period_reset_at) {
+        if (this.user.period_reset_at && period !== 'none') {
             const resetDate = new Date(this.user.period_reset_at);
             const now = new Date();
             const diffMs = resetDate - now;
@@ -184,6 +197,8 @@ class MEBVPNApp {
             } else {
                 this.usageReset.textContent = 'Sıfırlanıyor...';
             }
+        } else {
+            this.usageReset.textContent = '';
         }
     }
 
@@ -191,9 +206,21 @@ class MEBVPNApp {
     async toggleConnection() {
         if (this.isConnecting) return;
 
+        // If limit was previously exceeded, re-check from server before blocking
         if (this.limitExceeded && !this.isConnected) {
-            this.showLimitExceededWarning('Veri limitiniz doldu! Bağlantı kurulamaz.');
-            return;
+            try {
+                const usage = await window.mebAPI.refreshUsage();
+                if (usage) {
+                    this.updateUsageFromServer(usage);
+                }
+                // If still exceeded after fresh check, block
+                if (this.limitExceeded) {
+                    this.showLimitExceededWarning('Veri limitiniz doldu! Bağlantı kurulamaz.');
+                    return;
+                }
+            } catch (e) {
+                // If check fails, try to connect anyway
+            }
         }
 
         this.triggerRipple();
