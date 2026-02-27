@@ -28,8 +28,6 @@ jobs:
 
       - name: Build Windows
         run: npm run build:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
@@ -60,8 +58,6 @@ jobs:
 
       - name: Build Linux
         run: npm run build:linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
