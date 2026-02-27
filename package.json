@@ -50,9 +50,6 @@
             "oneClick": false,
             "perMachine": true,
             "allowToChangeInstallationDirectory": true,
-            "installerIcon": "resources/icon.png",
-            "uninstallerIcon": "resources/icon.png",
-            "installerHeaderIcon": "resources/icon.png",
             "createDesktopShortcut": true,
             "createStartMenuShortcut": true,
             "shortcutName": "MEB VPN"
