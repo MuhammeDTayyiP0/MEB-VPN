@@ -133,6 +133,7 @@ class AuthManager {
                 port: url.port,
                 path: url.pathname,
                 method: 'POST',
+                rejectUnauthorized: false,
                 headers: {
                     'Content-Type': 'application/json',
                     'Content-Length': Buffer.byteLength(postData),
@@ -179,6 +180,7 @@ class AuthManager {
                 port: url.port,
                 path: url.pathname,
                 method: 'GET',
+                rejectUnauthorized: false,
                 headers: { 'Authorization': `Bearer ${this.token}` },
             }, (res) => {
                 let data = '';
@@ -227,6 +229,7 @@ class AuthManager {
                 port: url.port,
                 path: url.pathname,
                 method: 'GET',
+                rejectUnauthorized: false,
                 headers: { 'Authorization': `Bearer ${this.token}` },
             }, (res) => {
                 let data = '';

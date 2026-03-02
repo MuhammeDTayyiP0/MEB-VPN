@@ -1,6 +1,6 @@
 {
     "name": "meb-vpn",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "MEB VPN - Güvenli VPN İstemcisi",
     "main": "src/main/main.js",
     "scripts": {

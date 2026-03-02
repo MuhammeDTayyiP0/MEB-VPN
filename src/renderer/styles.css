@@ -111,6 +111,14 @@ body.platform-linux {
     z-index: 100;
 }
 
+body.platform-linux .titlebar {
+    cursor: grab;
+}
+
+body.platform-linux .titlebar:active {
+    cursor: grabbing;
+}
+
 .titlebar-title {
     font-size: 0.8rem;
     font-weight: 600;

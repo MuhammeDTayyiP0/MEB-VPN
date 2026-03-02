@@ -12,6 +12,7 @@ let xrayManager;
 let proxySettings;
 let authManager;
 let usagePollInterval = null;
+let dragOffset = null;
 
 // Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -31,6 +32,15 @@ function createWindow() {
     const iconPath = path.join(__dirname, '..', '..', 'resources', 'icon.png');
     const isLinux = process.platform === 'linux';
 
+    // Load and resize icon properly for Linux
+    let appIcon = null;
+    if (fs.existsSync(iconPath)) {
+        appIcon = nativeImage.createFromPath(iconPath);
+        if (!appIcon.isEmpty() && isLinux) {
+            appIcon = appIcon.resize({ width: 256, height: 256 });
+        }
+    }
+
     mainWindow = new BrowserWindow({
         width: 420,
         height: 700,
@@ -47,7 +57,7 @@ function createWindow() {
             nodeIntegration: false,
         },
         title: 'MEB VPN',
-        icon: iconPath,
+        icon: appIcon || iconPath,
     });
 
     mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -58,7 +68,9 @@ function createWindow() {
         }
     });
 
-    if (fs.existsSync(iconPath)) mainWindow.setIcon(iconPath);
+    if (appIcon && !appIcon.isEmpty()) {
+        mainWindow.setIcon(appIcon);
+    }
 
     mainWindow.on('close', (event) => {
         if (!app.isQuitting) {
@@ -72,10 +84,15 @@ function createWindow() {
 
 function createTray() {
     const iconPath = path.join(__dirname, '..', '..', 'resources', 'icon.png');
+    const isLinux = process.platform === 'linux';
     let trayIcon;
 
     if (fs.existsSync(iconPath)) {
         trayIcon = nativeImage.createFromPath(iconPath);
+        // Linux tray icons should be small (22x22 or 24x24)
+        if (!trayIcon.isEmpty() && isLinux) {
+            trayIcon = trayIcon.resize({ width: 22, height: 22 });
+        }
     }
 
     if (!trayIcon || trayIcon.isEmpty()) {
@@ -86,7 +103,7 @@ function createTray() {
     try {
         tray = new Tray(trayIcon);
         const contextMenu = Menu.buildFromTemplate([
-            { label: 'MEB VPN v1.1', enabled: false },
+            { label: 'MEB VPN v1.2', enabled: false },
             { type: 'separator' },
             { label: 'Göster', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
             { type: 'separator' },
@@ -137,7 +154,6 @@ async function handleConnect() {
         await xrayManager.start();
         await proxySettings.enable('127.0.0.1', 10808);
         if (mainWindow) mainWindow.webContents.send('connection-status', 'connected');
-        startUsagePolling();
         return { success: true };
     } catch (error) {
         if (mainWindow) {
@@ -149,7 +165,6 @@ async function handleConnect() {
 }
 
 async function handleDisconnect() {
-    stopUsagePolling();
     try {
         await proxySettings.disable();
         await xrayManager.stop();
@@ -242,6 +257,7 @@ app.whenReady().then(async () => {
     });
 
     ipcMain.handle('auth:logout', async () => {
+        stopUsagePolling();
         await handleDisconnect();
         authManager.clearSession();
         if (mainWindow) mainWindow.webContents.send('auth-status', { loggedIn: false });
@@ -262,9 +278,36 @@ app.whenReady().then(async () => {
         return usage;
     });
 
-    // IPC: Window
+    // IPC: Start/stop polling from renderer
+    ipcMain.handle('usage:start-polling', () => {
+        startUsagePolling();
+        return { success: true };
+    });
+
+    ipcMain.handle('usage:stop-polling', () => {
+        stopUsagePolling();
+        return { success: true };
+    });
+
+    // IPC: Window controls
     ipcMain.handle('window:minimize', () => { if (mainWindow) mainWindow.minimize(); });
     ipcMain.handle('window:close', () => { if (mainWindow) mainWindow.hide(); });
+
+    // IPC: Window drag for Linux/smart boards
+    ipcMain.handle('window:start-drag', (event, { x, y }) => {
+        if (!mainWindow) return;
+        const [winX, winY] = mainWindow.getPosition();
+        dragOffset = { x: x - winX, y: y - winY };
+    });
+
+    ipcMain.handle('window:drag-move', (event, { x, y }) => {
+        if (!mainWindow || !dragOffset) return;
+        mainWindow.setPosition(x - dragOffset.x, y - dragOffset.y);
+    });
+
+    ipcMain.handle('window:end-drag', () => {
+        dragOffset = null;
+    });
 
     createWindow();
     createTray();

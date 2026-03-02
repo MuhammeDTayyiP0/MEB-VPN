@@ -15,6 +15,18 @@ contextBridge.exposeInMainWorld('mebAPI', {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     close: () => ipcRenderer.invoke('window:close'),
 
+    // Window Drag (for Linux/smart boards)
+    startDrag: (x, y) => ipcRenderer.invoke('window:start-drag', { x, y }),
+    moveDrag: (x, y) => ipcRenderer.invoke('window:drag-move', { x, y }),
+    endDrag: () => ipcRenderer.invoke('window:end-drag'),
+
+    // Usage Polling Control
+    startPolling: () => ipcRenderer.invoke('usage:start-polling'),
+    stopPolling: () => ipcRenderer.invoke('usage:stop-polling'),
+
+    // Platform
+    platform: process.platform,
+
     // Events from main process
     onAuthStatus: (callback) => {
         ipcRenderer.on('auth-status', (event, data) => callback(data));

@@ -9,10 +9,12 @@ class MEBVPNApp {
         this.timerInterval = null;
         this.particleInterval = null;
         this.user = null;
+        this.isDragging = false;
 
         this.initElements();
         this.initEventListeners();
         this.initIPCListeners();
+        this.initDrag();
         this.checkSession();
     }
 
@@ -63,6 +65,55 @@ class MEBVPNApp {
         document.getElementById('btn-premium').addEventListener('click', () => {
             this.showError('Premium paketler yakında aktif olacak!');
         });
+    }
+
+    // ========== WINDOW DRAG (Linux/Smart Board) ==========
+    initDrag() {
+        const titlebar = document.getElementById('titlebar');
+        const controls = document.getElementById('titlebar-controls');
+        if (!titlebar) return;
+
+        const isLinux = window.mebAPI.platform === 'linux';
+
+        if (!isLinux) {
+            // Windows/macOS: use native CSS drag
+            titlebar.style.webkitAppRegion = 'drag';
+            controls.style.webkitAppRegion = 'no-drag';
+            return;
+        }
+
+        // Linux: JS-based drag for smart board / touch compatibility
+        const onPointerDown = (e) => {
+            // Don't drag if clicking on buttons
+            if (e.target.closest('#titlebar-controls')) return;
+            this.isDragging = true;
+            const x = e.screenX || (e.touches && e.touches[0].screenX) || 0;
+            const y = e.screenY || (e.touches && e.touches[0].screenY) || 0;
+            window.mebAPI.startDrag(x, y);
+        };
+
+        const onPointerMove = (e) => {
+            if (!this.isDragging) return;
+            const x = e.screenX || (e.touches && e.touches[0].screenX) || 0;
+            const y = e.screenY || (e.touches && e.touches[0].screenY) || 0;
+            window.mebAPI.moveDrag(x, y);
+        };
+
+        const onPointerUp = () => {
+            if (!this.isDragging) return;
+            this.isDragging = false;
+            window.mebAPI.endDrag();
+        };
+
+        // Mouse events
+        titlebar.addEventListener('mousedown', onPointerDown);
+        document.addEventListener('mousemove', onPointerMove);
+        document.addEventListener('mouseup', onPointerUp);
+
+        // Touch events (for smart boards)
+        titlebar.addEventListener('touchstart', onPointerDown, { passive: true });
+        document.addEventListener('touchmove', onPointerMove, { passive: true });
+        document.addEventListener('touchend', onPointerUp);
     }
 
     initIPCListeners() {
@@ -154,6 +205,8 @@ class MEBVPNApp {
         this.viewLogin.classList.remove('active');
         this.viewDashboard.classList.add('active');
         this.updateUserUI();
+        // Start polling for usage data every 2 seconds
+        window.mebAPI.startPolling();
     }
 
     updateUserUI() {
