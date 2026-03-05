@@ -1,19 +1,20 @@
 {
     "name": "meb-vpn",
-    "version": "1.2.0",
+    "version": "1.2.3",
     "description": "MEB VPN - Güvenli VPN İstemcisi",
     "main": "src/main/main.js",
     "scripts": {
         "dev": "electron .",
         "build:win": "electron-builder --win --publish never",
         "build:linux": "electron-builder --linux --publish never",
+        "build:linux-user": "electron-builder --linux tar.gz --publish never",
         "build:all": "electron-builder --win --linux --publish never"
     },
     "author": "MEB VPN <info@mebvpn.com>",
     "license": "MIT",
     "devDependencies": {
-        "electron": "^28.1.0",
-        "electron-builder": "^24.9.1"
+        "electron": "^40.7.0",
+        "electron-builder": "^26.8.1"
     },
     "build": {
         "appId": "com.meb.vpn",
@@ -57,10 +58,11 @@
         "linux": {
             "target": [
                 "AppImage",
-                "deb"
+                "deb",
+                "tar.gz"
             ],
             "category": "Network",
-            "icon": "resources/icon.png",
+            "icon": "resources/icons",
             "desktop": {
                 "Name": "MEB VPN",
                 "Comment": "Güvenli VPN İstemcisi",
@@ -74,6 +76,9 @@
                 "libnss3",
                 "libxss1",
                 "libxtst6"
+            ],
+            "fpm": [
+                "--deb-no-default-config-files"
             ]
         }
     }

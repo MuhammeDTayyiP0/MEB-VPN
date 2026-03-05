@@ -26,6 +26,58 @@
     box-sizing: border-box;
 }
 
+/* SVG Icon Utility */
+.icon-svg {
+    width: 1em;
+    height: 1em;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.titlebar-btn .icon-svg {
+    width: 14px;
+    height: 14px;
+}
+
+.stat-icon .icon-svg {
+    width: 18px;
+    height: 18px;
+    color: var(--accent);
+}
+
+.user-avatar .icon-svg {
+    width: 22px;
+    height: 22px;
+    color: white;
+}
+
+.btn-icon-sm .icon-svg {
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+}
+
+.premium-icon .icon-svg {
+    width: 28px;
+    height: 28px;
+}
+
+.icon-crown {
+    color: var(--premium);
+}
+
+.icon-gift {
+    width: 16px;
+    height: 16px;
+    color: var(--accent);
+    margin-right: 0.25rem;
+}
+
+.free-badge .icon-svg {
+    width: 16px;
+    height: 16px;
+}
+
 body {
     font-family: 'Outfit', -apple-system, sans-serif;
     background: var(--bg-primary);

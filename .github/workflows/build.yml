@@ -14,7 +14,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Install dependencies
         run: npm ci
@@ -43,10 +43,22 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Generate multi-size icons
+        run: |
+          mkdir -p resources/icons
+          for size in 16 32 48 64 128 256 512; do
+            convert resources/icon.png -resize ${size}x${size} resources/icons/${size}x${size}.png
+          done
 
       - name: Download Xray (Linux)
         run: |
@@ -56,8 +68,19 @@ jobs:
           chmod +x resources/xray/xray
           rm xray.zip
 
-      - name: Build Linux
+      - name: Build Linux (deb + AppImage + tar.gz)
         run: npm run build:linux
+
+      - name: Create user installer
+        run: |
+          chmod +x scripts/create-user-installer.sh
+          VERSION=$(node -p "require('./package.json').version")
+          TAR_FILE=$(ls dist/*.tar.gz 2>/dev/null | head -1)
+          if [ -n "$TAR_FILE" ]; then
+            ./scripts/create-user-installer.sh "$TAR_FILE" "$VERSION"
+          else
+            echo "Warning: tar.gz not found, skipping user installer"
+          fi
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -66,6 +89,7 @@ jobs:
           path: |
             dist/*.AppImage
             dist/*.deb
+            dist/*-user-installer.sh
 
   release:
     needs: [build-windows, build-linux]
@@ -95,20 +119,28 @@ jobs:
             ## MEB VPN ${{ github.ref_name }}
 
             ### İndirme
-            | Platform | Dosya |
-            |----------|-------|
-            | Windows | `MEB VPN Setup *.exe` |
-            | Linux (Pardus/Ubuntu/Debian) | `*.deb` |
-            | Linux (Portable) | `*.AppImage` |
+            | Platform | Dosya | Kurulum |
+            |----------|-------|---------|
+            | Windows | `MEB VPN Setup *.exe` | Kurulum sihirbazını çalıştırın |
+            | Linux (Sudo) | `*.deb` | `sudo dpkg -i meb-vpn_*.deb` |
+            | Linux (Sudosuz) | `*-user-installer.sh` | `chmod +x *-user-installer.sh && ./*-user-installer.sh` |
+            | Linux (Portable) | `*.AppImage` | `chmod +x *.AppImage && ./*.AppImage` |
 
-            ### Kurulum
-            - **Windows**: Setup.exe'yi çalıştırın
-            - **Linux .deb**: `sudo dpkg -i meb-vpn_*.deb`
-            - **Linux AppImage**: `chmod +x *.AppImage && ./*.AppImage`
+            ### Sudosuz Kurulum (Öğretmen/Öğrenci)
+            Sudo yetkisi olmayan kullanıcılar için **user-installer.sh** dosyasını indirin:
+            ```bash
+            chmod +x meb-vpn-*-user-installer.sh
+            ./meb-vpn-*-user-installer.sh
+            ```
+            - ✅ Sudo gerektirmez
+            - ✅ Uygulamalar menüsünde görünür
+            - ✅ Terminalden `meb-vpn` komutuyla başlatılabilir
+            - 🗑️ Kaldırma: `./meb-vpn-*-user-installer.sh --uninstall`
           files: |
             dist/*.exe
             dist/*.AppImage
             dist/*.deb
+            dist/*-user-installer.sh
           draft: false
           prerelease: false
         env:

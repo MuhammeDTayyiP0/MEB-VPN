@@ -9,7 +9,6 @@ class MEBVPNApp {
         this.timerInterval = null;
         this.particleInterval = null;
         this.user = null;
-        this.isDragging = false;
 
         this.initElements();
         this.initEventListeners();
@@ -67,7 +66,7 @@ class MEBVPNApp {
         });
     }
 
-    // ========== WINDOW DRAG (Linux/Smart Board) ==========
+    // ========== WINDOW DRAG (Linux/Smart Board - Optimized) ==========
     initDrag() {
         const titlebar = document.getElementById('titlebar');
         const controls = document.getElementById('titlebar-controls');
@@ -82,38 +81,121 @@ class MEBVPNApp {
             return;
         }
 
-        // Linux: JS-based drag for smart board / touch compatibility
-        const onPointerDown = (e) => {
+        // Linux: Optimized JS-based drag for smart board / touch compatibility
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let dragActive = false;
+        let dragThreshold = 5; // pixels before drag starts (prevents accidental drags)
+        let dragStarted = false;
+        let rafId = null;
+        let lastMoveX = 0;
+        let lastMoveY = 0;
+
+        // Prevent default touch behaviors on titlebar
+        titlebar.style.touchAction = 'none';
+        titlebar.style.userSelect = 'none';
+        titlebar.style.webkitUserSelect = 'none';
+
+        const startDrag = (x, y, e) => {
             // Don't drag if clicking on buttons
             if (e.target.closest('#titlebar-controls')) return;
-            this.isDragging = true;
-            const x = e.screenX || (e.touches && e.touches[0].screenX) || 0;
-            const y = e.screenY || (e.touches && e.touches[0].screenY) || 0;
-            window.mebAPI.startDrag(x, y);
+
+            dragActive = true;
+            dragStarted = false;
+            dragStartX = x;
+            dragStartY = y;
+
+            // Prevent text selection during drag
+            document.body.style.userSelect = 'none';
+            document.body.style.webkitUserSelect = 'none';
         };
 
-        const onPointerMove = (e) => {
-            if (!this.isDragging) return;
-            const x = e.screenX || (e.touches && e.touches[0].screenX) || 0;
-            const y = e.screenY || (e.touches && e.touches[0].screenY) || 0;
-            window.mebAPI.moveDrag(x, y);
+        const moveDrag = (x, y) => {
+            if (!dragActive) return;
+
+            // Check threshold before starting actual drag
+            if (!dragStarted) {
+                const dx = Math.abs(x - dragStartX);
+                const dy = Math.abs(y - dragStartY);
+                if (dx < dragThreshold && dy < dragThreshold) return;
+                dragStarted = true;
+                window.mebAPI.startDrag(dragStartX, dragStartY);
+            }
+
+            // Throttle with requestAnimationFrame for smooth movement
+            lastMoveX = x;
+            lastMoveY = y;
+            if (!rafId) {
+                rafId = requestAnimationFrame(() => {
+                    rafId = null;
+                    if (dragActive && dragStarted) {
+                        window.mebAPI.moveDrag(lastMoveX, lastMoveY);
+                    }
+                });
+            }
         };
 
-        const onPointerUp = () => {
-            if (!this.isDragging) return;
-            this.isDragging = false;
+        const endDrag = () => {
+            if (!dragActive) return;
+            dragActive = false;
+            dragStarted = false;
+
+            if (rafId) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+            }
+
             window.mebAPI.endDrag();
+
+            // Restore text selection
+            document.body.style.userSelect = '';
+            document.body.style.webkitUserSelect = '';
         };
 
-        // Mouse events
-        titlebar.addEventListener('mousedown', onPointerDown);
-        document.addEventListener('mousemove', onPointerMove);
-        document.addEventListener('mouseup', onPointerUp);
+        // Pointer events (unified mouse + touch + pen)
+        if (window.PointerEvent) {
+            titlebar.addEventListener('pointerdown', (e) => {
+                if (e.target.closest('#titlebar-controls')) return;
+                titlebar.setPointerCapture(e.pointerId);
+                startDrag(e.screenX, e.screenY, e);
+            });
 
-        // Touch events (for smart boards)
-        titlebar.addEventListener('touchstart', onPointerDown, { passive: true });
-        document.addEventListener('touchmove', onPointerMove, { passive: true });
-        document.addEventListener('touchend', onPointerUp);
+            titlebar.addEventListener('pointermove', (e) => {
+                moveDrag(e.screenX, e.screenY);
+            });
+
+            titlebar.addEventListener('pointerup', (e) => {
+                titlebar.releasePointerCapture(e.pointerId);
+                endDrag();
+            });
+
+            titlebar.addEventListener('pointercancel', (e) => {
+                titlebar.releasePointerCapture(e.pointerId);
+                endDrag();
+            });
+        } else {
+            // Fallback: separate mouse + touch events
+            titlebar.addEventListener('mousedown', (e) => {
+                startDrag(e.screenX, e.screenY, e);
+            });
+            document.addEventListener('mousemove', (e) => {
+                moveDrag(e.screenX, e.screenY);
+            });
+            document.addEventListener('mouseup', endDrag);
+
+            titlebar.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    startDrag(e.touches[0].screenX, e.touches[0].screenY, e);
+                }
+            }, { passive: true });
+            document.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 1) {
+                    moveDrag(e.touches[0].screenX, e.touches[0].screenY);
+                }
+            }, { passive: true });
+            document.addEventListener('touchend', endDrag);
+            document.addEventListener('touchcancel', endDrag);
+        }
     }
 
     initIPCListeners() {
