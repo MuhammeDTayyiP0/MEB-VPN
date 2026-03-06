@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { EventEmitter } = require('events');
 const ConfigGenerator = require('./config-generator');
+const sudo = require('sudo-prompt');
 
 class XrayManager extends EventEmitter {
     constructor() {
@@ -64,60 +65,41 @@ class XrayManager extends EventEmitter {
 
             return new Promise((resolve, reject) => {
                 const binaryDir = path.dirname(binaryPath);
-                let stderrOutput = '';
 
-                this.process = spawn(binaryPath, ['-c', configPath], {
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                    cwd: binaryDir,
+                // To create a TUN interface, Xray requires Root/Administrator privileges
+                const sudoOption = {
+                    name: 'MEB VPN'
+                };
+
+                // Because sudo-prompt runs the process in the background effectively without real-time stdout piping
+                // we will start it and assume success if it doesn't immediately fail.
+                const command = `"${binaryPath}" -c "${configPath}"`;
+
+                sudo.exec(command, sudoOption, (error, stdout, stderr) => {
+                    if (error) {
+                        this.running = false;
+                        this.startTime = null;
+                        this.stopStatsPolling();
+                        this.emit('log', `[SUDO ERROR] ${error.message}`);
+                        reject(error);
+                    } else {
+                        // This callback actually triggers when Xray CLOSES, since it's a long-running process
+                        // which means Xray stopped.
+                        this.running = false;
+                        this.startTime = null;
+                        this.stopStatsPolling();
+                        this.emit('log', `Xray kapandı.`);
+                    }
                 });
 
-                let started = false;
-                const startTimeout = setTimeout(() => {
-                    if (!started) {
-                        started = true;
-                        this.running = true;
-                        this.startTime = Date.now();
-                        this.startStatsPolling();
-                        resolve();
-                    }
+                // Since sudo-prompt doesn't give us stdout chunks for a long running process until exit,
+                // we assume it started after the prompt is accepted (give it 3 seconds)
+                setTimeout(() => {
+                    this.running = true;
+                    this.startTime = Date.now();
+                    this.startStatsPolling();
+                    resolve();
                 }, 3000);
-
-                this.process.stdout.on('data', (data) => {
-                    const output = data.toString().trim();
-                    this.emit('log', output);
-                    if (!started && output.includes('started')) {
-                        started = true;
-                        clearTimeout(startTimeout);
-                        this.running = true;
-                        this.startTime = Date.now();
-                        this.startStatsPolling();
-                        resolve();
-                    }
-                });
-
-                this.process.stderr.on('data', (data) => {
-                    stderrOutput += data.toString().trim() + '\n';
-                    this.emit('log', `[STDERR] ${data.toString().trim()}`);
-                });
-
-                this.process.on('error', (error) => {
-                    this.running = false;
-                    this.startTime = null;
-                    clearTimeout(startTimeout);
-                    this.stopStatsPolling();
-                    if (!started) { started = true; reject(error); }
-                });
-
-                this.process.on('close', (code) => {
-                    this.running = false;
-                    this.startTime = null;
-                    this.stopStatsPolling();
-                    if (!started) {
-                        started = true;
-                        clearTimeout(startTimeout);
-                        if (code !== 0) reject(new Error(stderrOutput.trim() || `Xray exited: ${code}`));
-                    }
-                });
             });
         } catch (error) {
             this.emit('error', error.message);
@@ -191,33 +173,26 @@ class XrayManager extends EventEmitter {
     }
 
     async stop() {
-        if (!this.process || !this.running) {
-            this.running = false;
+        if (!this.running) {
             this.stopStatsPolling();
             return;
         }
 
         return new Promise((resolve) => {
-            this.process.on('close', () => {
-                this.running = false;
-                this.startTime = null;
-                this.process = null;
-                this.stopStatsPolling();
-                resolve();
-            });
+            this.running = false;
+            this.startTime = null;
+            this.stopStatsPolling();
 
+            // Kill xray instance using system commands
+            const sudoOption = { name: 'MEB VPN' };
             if (process.platform === 'win32') {
-                spawn('taskkill', ['/pid', this.process.pid, '/f', '/t']);
+                sudo.exec('taskkill /IM xray.exe /F /T', sudoOption, () => { resolve(); });
             } else {
-                this.process.kill('SIGTERM');
+                sudo.exec('killall -9 xray', sudoOption, () => { resolve(); });
             }
 
-            setTimeout(() => {
-                if (this.process) {
-                    try { this.process.kill('SIGKILL'); } catch (e) { }
-                }
-                resolve();
-            }, 5000);
+            // Failsafe resolution
+            setTimeout(resolve, 3000);
         });
     }
 

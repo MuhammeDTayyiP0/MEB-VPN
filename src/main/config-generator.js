@@ -60,21 +60,15 @@ class ConfigGenerator {
                     settings: { address: '127.0.0.1' },
                 },
                 {
-                    tag: 'socks-in',
-                    port: config.socksPort,
-                    listen: '127.0.0.1',
-                    protocol: 'socks',
-                    settings: { auth: 'noauth', udp: true },
-                    sniffing: { enabled: true, destOverride: ['http', 'tls'] },
-                },
-                {
-                    tag: 'http-in',
-                    port: config.httpPort,
-                    listen: '127.0.0.1',
-                    protocol: 'http',
-                    settings: {},
-                    sniffing: { enabled: true, destOverride: ['http', 'tls'] },
-                },
+                    tag: 'tun-in',
+                    protocol: 'tun',
+                    settings: {
+                        autoRoute: true,
+                        strictRoute: true,
+                        stack: 'system',
+                        sniffing: { enabled: true, destOverride: ['http', 'tls', 'quic'] }
+                    }
+                }
             ],
             outbounds: [
                 {
