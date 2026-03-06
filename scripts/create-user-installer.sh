@@ -93,19 +93,9 @@ tail -n +"$ARCHIVE_START" "$0" | tar xzf - -C "$INSTALL_DIR" --strip-components=
 chmod +x "$INSTALL_DIR/meb-vpn" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/chrome-sandbox" 2>/dev/null || true
 
-# xray binary'sine çalıştırma yetkisi ve TUN için ağ yetenekleri (capabilities)
+# xray binary'sine çalıştırma yetkisi
 if [ -d "$INSTALL_DIR/resources/xray" ]; then
     chmod +x "$INSTALL_DIR/resources/xray/xray" 2>/dev/null || true
-    # TUN interface oluşturabilmesi için root yetkisi olmadan cap_net_admin veriyoruz.
-    # Bu adım sudo gerektirir, installer çalıştırılırken bir kereliğine şifre isteyebilir.
-    if command -v setcap &>/dev/null; then
-        if [ "$EUID" -ne 0 ]; then
-            echo -e "${YELLOW}➜ VPN ağ yönlendirmesi için tek seferlik yetki gerekiyor...${NC}"
-            sudo setcap cap_net_admin,cap_net_bind_service=ep "$INSTALL_DIR/resources/xray/xray" || echo -e "${RED}Yetki verilemedi, VPN bağlanırken şifre sorabilir.${NC}"
-        else
-            setcap cap_net_admin,cap_net_bind_service=ep "$INSTALL_DIR/resources/xray/xray" || true
-        fi
-    fi
 fi
 
 # Symlink oluştur

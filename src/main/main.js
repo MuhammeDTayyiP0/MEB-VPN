@@ -103,7 +103,7 @@ function createTray() {
     try {
         tray = new Tray(trayIcon);
         const contextMenu = Menu.buildFromTemplate([
-            { label: 'MEB VPN v1.2.7', enabled: false },
+            { label: 'MEB VPN v1.2.8', enabled: false },
             { type: 'separator' },
             { label: 'Göster', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
             { type: 'separator' },
