@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { EventEmitter } = require('events');
 const ConfigGenerator = require('./config-generator');
-const sudo = require('sudo-prompt');
+const sudo = require('@vscode/sudo-prompt');
 
 class XrayManager extends EventEmitter {
     constructor() {
