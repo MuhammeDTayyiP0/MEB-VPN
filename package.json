@@ -1,6 +1,6 @@
 {
     "name": "meb-vpn",
-    "version": "1.2.4",
+    "version": "1.2.6",
     "description": "MEB VPN - Güvenli VPN İstemcisi",
     "main": "src/main/main.js",
     "scripts": {
@@ -76,5 +76,8 @@
                 "--deb-no-default-config-files"
             ]
         }
+    },
+    "dependencies": {
+        "sudo-prompt": "^9.2.1"
     }
 }
