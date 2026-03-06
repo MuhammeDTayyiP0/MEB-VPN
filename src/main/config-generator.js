@@ -32,6 +32,18 @@ class ConfigGenerator {
 
         const xrayConfig = {
             log: { loglevel: 'warning' },
+            dns: {
+                servers: [
+                    '1.1.1.1',
+                    '8.8.8.8',
+                    {
+                        address: 'localhost',
+                        port: 53,
+                        domains: ['ntp', 'google.com', config.address]
+                    }
+                ],
+                queryStrategy: 'UseIP'
+            },
             stats: {},
             api: {
                 tag: 'api',
@@ -65,7 +77,7 @@ class ConfigGenerator {
                     listen: '127.0.0.1',
                     protocol: 'socks',
                     settings: { auth: 'noauth', udp: true },
-                    sniffing: { enabled: true, destOverride: ['http', 'tls'] },
+                    sniffing: { enabled: true, destOverride: ['http', 'tls', 'quic'] },
                 },
                 {
                     tag: 'http-in',
@@ -73,7 +85,7 @@ class ConfigGenerator {
                     listen: '127.0.0.1',
                     protocol: 'http',
                     settings: {},
-                    sniffing: { enabled: true, destOverride: ['http', 'tls'] },
+                    sniffing: { enabled: true, destOverride: ['http', 'tls', 'quic'] },
                 }
             ],
             outbounds: [
@@ -109,11 +121,19 @@ class ConfigGenerator {
                 { tag: 'block', protocol: 'blackhole', settings: { response: { type: 'http' } } },
             ],
             routing: {
-                domainStrategy: 'AsIs',
+                domainStrategy: 'IPIfNonMatch',
                 rules: [
                     { type: 'field', inboundTag: ['api'], outboundTag: 'api' },
-                    { type: 'field', outboundTag: 'direct', ip: ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '::1/128', 'fc00::/7', 'fe80::/10'] },
-                    { type: 'field', outboundTag: 'direct', domain: ['localhost'] },
+                    {
+                        type: 'field',
+                        outboundTag: 'direct',
+                        domain: ['localhost', config.address, config.sni]
+                    },
+                    {
+                        type: 'field',
+                        outboundTag: 'direct',
+                        ip: ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '::1/128', 'fc00::/7', 'fe80::/10']
+                    },
                     { type: 'field', outboundTag: 'proxy', port: '0-65535' },
                 ],
             },

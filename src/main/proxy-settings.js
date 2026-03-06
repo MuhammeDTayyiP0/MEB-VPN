@@ -9,20 +9,26 @@ class ProxySettings {
 
     async enable(host, port) {
         const proxyAddress = `${host}:${port + 1}`; // HTTP proxy port (10809)
+        const socksAddress = `socks=${host}:${port}`;
+
+        console.log(`Enabling system proxy: ${proxyAddress}`);
 
         try {
             if (this.platform === 'win32') {
+                // Windows: Set global proxy and also per-protocol for better coverage
                 await this._execCommand(
                     `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f`
                 );
                 await this._execCommand(
                     `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "${proxyAddress}" /f`
                 );
+                // Force specific protocols just in case
                 await this._execCommand(
-                    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyOverride /t REG_SZ /d "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*;<local>" /f`
+                    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyOverride /t REG_SZ /d "localhost;127.*;<local>" /f`
                 );
             } else if (this.platform === 'linux') {
                 try {
+                    // GNOME / Pardus standard
                     await this._execCommand(`gsettings set org.gnome.system.proxy mode 'manual'`);
                     await this._execCommand(`gsettings set org.gnome.system.proxy.http host '${host}'`);
                     await this._execCommand(`gsettings set org.gnome.system.proxy.http port ${port + 1}`);
@@ -30,17 +36,20 @@ class ProxySettings {
                     await this._execCommand(`gsettings set org.gnome.system.proxy.https port ${port + 1}`);
                     await this._execCommand(`gsettings set org.gnome.system.proxy.socks host '${host}'`);
                     await this._execCommand(`gsettings set org.gnome.system.proxy.socks port ${port}`);
-                } catch {
-                    console.log('GNOME proxy settings not available, using env vars only');
+                    console.log('GNOME proxy settings applied via gsettings');
+                } catch (e) {
+                    console.log('gsettings failed, user might not be on GNOME:', e.message);
                 }
             }
             this.enabled = true;
         } catch (error) {
+            console.error('Proxy enable error:', error);
             throw new Error(`Proxy ayarları yapılamadı: ${error.message}`);
         }
     }
 
     async disable() {
+        console.log('Disabling system proxy');
         try {
             if (this.platform === 'win32') {
                 await this._execCommand(
@@ -49,12 +58,13 @@ class ProxySettings {
             } else if (this.platform === 'linux') {
                 try {
                     await this._execCommand(`gsettings set org.gnome.system.proxy mode 'none'`);
-                } catch {
-                    console.log('GNOME proxy settings not available');
+                } catch (e) {
+                    console.error('gsettings disable failed:', e.message);
                 }
             }
             this.enabled = false;
         } catch (error) {
+            console.error('Proxy disable error:', error);
             throw new Error(`Proxy ayarları kaldırılamadı: ${error.message}`);
         }
     }
