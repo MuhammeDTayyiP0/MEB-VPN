@@ -1,14 +1,15 @@
 {
     "name": "meb-vpn",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "description": "MEB VPN - Güvenli VPN İstemcisi",
     "main": "src/main/main.js",
     "scripts": {
         "dev": "electron .",
-        "build:win": "electron-builder --win --publish never",
-        "build:linux": "electron-builder --linux --publish never",
-        "build:linux-user": "electron-builder --linux tar.gz --publish never",
-        "build:all": "electron-builder --win --linux --publish never"
+        "generate-icons": "node scripts/generate-icons.js",
+        "build:win": "npm run generate-icons && electron-builder --win --publish never",
+        "build:linux": "npm run generate-icons && electron-builder --linux --publish never",
+        "build:linux-user": "npm run generate-icons && electron-builder --linux tar.gz --publish never",
+        "build:all": "npm run generate-icons && electron-builder --win --linux --publish never"
     },
     "author": "MEB VPN <info@mebvpn.com>",
     "license": "MIT",

@@ -53,13 +53,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate multi-size icons
-        run: |
-          mkdir -p resources/icons
-          for size in 16 32 48 64 128 256 512; do
-            convert resources/icon.png -resize ${size}x${size} resources/icons/${size}x${size}.png
-          done
-
       - name: Download Xray (Linux)
         run: |
           mkdir -p resources/xray

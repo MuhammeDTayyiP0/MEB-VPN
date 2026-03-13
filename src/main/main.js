@@ -13,6 +13,7 @@ let proxySettings;
 let authManager;
 let usagePollInterval = null;
 let dragOffset = null;
+let isVpnConnected = false;
 
 // Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -32,7 +33,6 @@ function createWindow() {
     const iconPath = path.join(__dirname, '..', '..', 'resources', 'icon.png');
     const isLinux = process.platform === 'linux';
 
-    // Load and resize icon properly for Linux
     let appIcon = null;
     if (fs.existsSync(iconPath)) {
         appIcon = nativeImage.createFromPath(iconPath);
@@ -89,7 +89,6 @@ function createTray() {
 
     if (fs.existsSync(iconPath)) {
         trayIcon = nativeImage.createFromPath(iconPath);
-        // Linux tray icons should be small (22x22 or 24x24)
         if (!trayIcon.isEmpty() && isLinux) {
             trayIcon = trayIcon.resize({ width: 22, height: 22 });
         }
@@ -103,7 +102,7 @@ function createTray() {
     try {
         tray = new Tray(trayIcon);
         const contextMenu = Menu.buildFromTemplate([
-            { label: 'MEB VPN v1.3.0', enabled: false },
+            { label: 'MEB VPN v1.4.0', enabled: false },
             { type: 'separator' },
             { label: 'Göster', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
             { type: 'separator' },
@@ -121,26 +120,43 @@ function createTray() {
     }
 }
 
+// ========== SEND TO RENDERER ==========
+function sendToRenderer(channel, data) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(channel, data);
+    }
+}
+
+// ========== CONNECTION MANAGEMENT ==========
 async function handleConnect() {
+    // Already connected?
+    if (isVpnConnected) {
+        sendToRenderer('connection-error', 'Zaten bağlısınız');
+        return { success: false, error: 'Already connected' };
+    }
+
+    // Logged in?
     if (!authManager.isLoggedIn()) {
-        if (mainWindow) mainWindow.webContents.send('connection-error', 'Önce giriş yapın');
+        sendToRenderer('connection-error', 'Önce giriş yapın');
         return { success: false, error: 'Not logged in' };
+    }
+
+    // VPN config available?
+    if (!authManager.hasVpnConfig()) {
+        sendToRenderer('connection-error', 'VPN yapılandırması bulunamadı. Lütfen tekrar giriş yapın.');
+        return { success: false, error: 'No VPN config' };
     }
 
     // Check usage before connecting
     try {
         const usage = await authManager.fetchUsage();
         if (usage && usage.limit_exceeded) {
-            if (mainWindow) {
-                mainWindow.webContents.send('limit-exceeded', 'Veri limitiniz doldu! Bağlantı kurulamaz.');
-                mainWindow.webContents.send('usage-update', usage);
-            }
+            sendToRenderer('limit-exceeded', 'Veri limitiniz doldu! Bağlantı kurulamaz.');
+            sendToRenderer('usage-update', usage);
             return { success: false, error: 'Veri limitiniz doldu!' };
         }
         if (usage && !usage.active) {
-            if (mainWindow) {
-                mainWindow.webContents.send('connection-error', 'Hesabınız devre dışı. Lütfen yöneticiyle iletişime geçin.');
-            }
+            sendToRenderer('connection-error', 'Hesabınız devre dışı. Lütfen yöneticiyle iletişime geçin.');
             return { success: false, error: 'Hesap devre dışı' };
         }
     } catch (e) {
@@ -148,64 +164,107 @@ async function handleConnect() {
         console.error('Usage check failed:', e.message);
     }
 
+    // Start connecting
+    sendToRenderer('connection-status', 'connecting');
+
     try {
-        if (mainWindow) mainWindow.webContents.send('connection-status', 'connecting');
         xrayManager.setVpnConfig(authManager.getVpnConfig());
         await xrayManager.start();
         await proxySettings.enable('127.0.0.1', 10808);
-        if (mainWindow) mainWindow.webContents.send('connection-status', 'connected');
+
+        isVpnConnected = true;
+        sendToRenderer('connection-status', 'connected');
+        startUsagePolling();
         return { success: true };
     } catch (error) {
-        if (mainWindow) {
-            mainWindow.webContents.send('connection-status', 'disconnected');
-            mainWindow.webContents.send('connection-error', error.message);
-        }
+        console.error('Connect error:', error.message);
+
+        // Cleanup on failure: ensure proxy is disabled and xray is stopped
+        try { await proxySettings.disable(); } catch (e) { }
+        try { await xrayManager.stop(); } catch (e) { }
+
+        isVpnConnected = false;
+        sendToRenderer('connection-status', 'disconnected');
+        sendToRenderer('connection-error', error.message || 'Bağlantı kurulamadı');
         return { success: false, error: error.message };
     }
 }
 
 async function handleDisconnect() {
+    if (!isVpnConnected && !xrayManager.isRunning() && !proxySettings.isEnabled()) {
+        // Nothing to do, but make sure UI is synced
+        sendToRenderer('connection-status', 'disconnected');
+        return { success: true };
+    }
+
+    stopUsagePolling();
+
     try {
-        await proxySettings.disable();
-        await xrayManager.stop();
-        if (mainWindow) mainWindow.webContents.send('connection-status', 'disconnected');
+        // Always try to disable proxy first (most important for user experience)
+        try { await proxySettings.disable(); } catch (e) {
+            console.error('Proxy disable error:', e.message);
+        }
+
+        // Then stop xray
+        try { await xrayManager.stop(); } catch (e) {
+            console.error('Xray stop error:', e.message);
+        }
+
+        isVpnConnected = false;
+        sendToRenderer('connection-status', 'disconnected');
         return { success: true };
     } catch (error) {
+        isVpnConnected = false;
+        sendToRenderer('connection-status', 'disconnected');
         return { success: false, error: error.message };
     }
 }
 
+/**
+ * Handle unexpected Xray process exit (crash)
+ */
+async function handleUnexpectedDisconnect(exitCode) {
+    console.log(`Xray process unexpectedly exited (code: ${exitCode})`);
+    isVpnConnected = false;
+    stopUsagePolling();
+
+    // Disable proxy immediately
+    try { await proxySettings.disable(); } catch (e) {
+        console.error('Proxy disable error after crash:', e.message);
+    }
+
+    sendToRenderer('connection-status', 'disconnected');
+    sendToRenderer('connection-error', 'VPN bağlantısı beklenmedik şekilde kesildi. Lütfen tekrar bağlanın.');
+}
+
+// ========== USAGE POLLING ==========
 function startUsagePolling() {
     stopUsagePolling();
     usagePollInterval = setInterval(async () => {
-        if (!authManager.isLoggedIn()) return;
+        if (!authManager.isLoggedIn() || !isVpnConnected) return;
+
         try {
             const usage = await authManager.fetchUsage();
             if (!usage) return;
 
-            // Send usage update to renderer
-            if (mainWindow) mainWindow.webContents.send('usage-update', usage);
+            sendToRenderer('usage-update', usage);
 
             // Check if limit exceeded
             if (usage.limit_exceeded) {
                 console.log('Data limit exceeded, disconnecting...');
-                if (mainWindow) {
-                    mainWindow.webContents.send('limit-exceeded', 'Veri limitiniz doldu! Bağlantı kesildi.');
-                }
+                sendToRenderer('limit-exceeded', 'Veri limitiniz doldu! Bağlantı kesildi.');
                 await handleDisconnect();
             }
             // Check if account deactivated by admin
             else if (!usage.active) {
                 console.log('Account deactivated, disconnecting...');
-                if (mainWindow) {
-                    mainWindow.webContents.send('connection-error', 'Hesabınız devre dışı bırakıldı.');
-                }
+                sendToRenderer('connection-error', 'Hesabınız devre dışı bırakıldı.');
                 await handleDisconnect();
             }
         } catch (e) {
             console.error('Usage poll error:', e.message);
         }
-    }, 2000); // Check every 2 seconds
+    }, 2000);
 }
 
 function stopUsagePolling() {
@@ -215,6 +274,7 @@ function stopUsagePolling() {
     }
 }
 
+// ========== APP LIFECYCLE ==========
 app.whenReady().then(async () => {
     if (process.platform === 'win32') {
         app.setAppUserModelId('com.meb.vpn');
@@ -225,21 +285,26 @@ app.whenReady().then(async () => {
     authManager = new AuthManager();
     authManager.init(app.getPath('userData'));
 
+    // Listen for unexpected xray exit
+    xrayManager.on('unexpected-exit', (code) => {
+        handleUnexpectedDisconnect(code);
+    });
+
     // Traffic data forwarding
     xrayManager.on('traffic', (data) => {
-        if (mainWindow) mainWindow.webContents.send('traffic-update', data);
+        sendToRenderer('traffic-update', data);
     });
 
     xrayManager.on('log', (log) => {
         console.log('[Xray]', log);
     });
 
-    // IPC: Auth
+    // ========== IPC: Auth ==========
     ipcMain.handle('auth:google-signin', async () => {
         try {
             const idToken = await authManager.googleSignIn(mainWindow);
             const result = await authManager.authenticateWithServer(idToken);
-            if (mainWindow) mainWindow.webContents.send('auth-status', { loggedIn: true, user: result.user });
+            sendToRenderer('auth-status', { loggedIn: true, user: result.user });
             return { success: true, user: result.user };
         } catch (error) {
             return { success: false, error: error.message };
@@ -260,27 +325,27 @@ app.whenReady().then(async () => {
         stopUsagePolling();
         await handleDisconnect();
         authManager.clearSession();
-        if (mainWindow) mainWindow.webContents.send('auth-status', { loggedIn: false });
+        sendToRenderer('auth-status', { loggedIn: false });
         return { success: true };
     });
 
-    // IPC: VPN
+    // ========== IPC: VPN ==========
     ipcMain.handle('vpn:connect', () => handleConnect());
     ipcMain.handle('vpn:disconnect', () => handleDisconnect());
     ipcMain.handle('vpn:status', () => ({
-        connected: xrayManager.isRunning(),
+        connected: isVpnConnected,
+        xrayRunning: xrayManager.isRunning(),
+        proxyEnabled: proxySettings.isEnabled(),
         uptime: xrayManager.getUptime(),
     }));
 
-    // IPC: Usage
+    // ========== IPC: Usage ==========
     ipcMain.handle('usage:refresh', async () => {
-        const usage = await authManager.fetchUsage();
-        return usage;
+        return await authManager.fetchUsage();
     });
 
-    // IPC: Start/stop polling from renderer
     ipcMain.handle('usage:start-polling', () => {
-        startUsagePolling();
+        if (isVpnConnected) startUsagePolling();
         return { success: true };
     });
 
@@ -289,7 +354,7 @@ app.whenReady().then(async () => {
         return { success: true };
     });
 
-    // IPC: Window controls
+    // ========== IPC: Window controls ==========
     ipcMain.handle('window:minimize', () => { if (mainWindow) mainWindow.minimize(); });
     ipcMain.handle('window:close', () => { if (mainWindow) mainWindow.hide(); });
 
@@ -315,7 +380,12 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => { });
 app.on('activate', () => { if (mainWindow === null) createWindow(); });
-app.on('before-quit', async () => {
-    app.isQuitting = true;
-    await handleDisconnect();
+
+app.on('before-quit', async (event) => {
+    if (!app.isQuitting) {
+        app.isQuitting = true;
+        event.preventDefault();
+        await handleDisconnect();
+        app.quit();
+    }
 });

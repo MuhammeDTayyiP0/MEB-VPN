@@ -11,6 +11,9 @@ class XrayManager extends EventEmitter {
         this.running = false;
         this.configGenerator = new ConfigGenerator();
         this.startTime = null;
+        this.statsInterval = null;
+        this.lastStats = null;
+        this._stopping = false;
     }
 
     setVpnConfig(vpnConfig) {
@@ -50,6 +53,8 @@ class XrayManager extends EventEmitter {
             return;
         }
 
+        this._stopping = false;
+
         try {
             const configPath = this.getConfigPath();
             this.configGenerator.generateConfig(configPath);
@@ -65,57 +70,81 @@ class XrayManager extends EventEmitter {
             return new Promise((resolve, reject) => {
                 const binaryDir = path.dirname(binaryPath);
                 let stderrOutput = '';
+                let settled = false;
+
+                const settle = (success, error) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(startTimeout);
+                    if (success) {
+                        this.running = true;
+                        this.startTime = Date.now();
+                        this._startStatsPolling();
+                        resolve();
+                    } else {
+                        this.running = false;
+                        this.startTime = null;
+                        reject(error || new Error('Xray başlatılamadı'));
+                    }
+                };
 
                 this.process = spawn(binaryPath, ['-c', configPath], {
                     stdio: ['pipe', 'pipe', 'pipe'],
                     cwd: binaryDir,
+                    windowsHide: true,
                 });
 
-                let started = false;
+                // 5 second timeout — if Xray doesn't report "started", reject
                 const startTimeout = setTimeout(() => {
-                    if (!started) {
-                        started = true;
-                        this.running = true;
-                        this.startTime = Date.now();
-                        this.startStatsPolling();
-                        resolve();
+                    if (!settled) {
+                        // Check if process is still alive
+                        if (this.process && !this.process.killed) {
+                            // Process alive but no "started" message — likely config error
+                            // Kill it and reject
+                            this.emit('log', 'Xray 5sn içinde başlamadı, sonlandırılıyor...');
+                            this._killProcess();
+                            settle(false, new Error(stderrOutput.trim() || 'Xray 5 saniye içinde başlatılamadı'));
+                        } else {
+                            settle(false, new Error(stderrOutput.trim() || 'Xray process sonlandı'));
+                        }
                     }
-                }, 3000);
+                }, 5000);
 
                 this.process.stdout.on('data', (data) => {
                     const output = data.toString().trim();
                     this.emit('log', output);
-                    if (!started && output.includes('started')) {
-                        started = true;
-                        clearTimeout(startTimeout);
-                        this.running = true;
-                        this.startTime = Date.now();
-                        this.startStatsPolling();
-                        resolve();
+                    if (!settled && output.includes('started')) {
+                        settle(true);
                     }
                 });
 
                 this.process.stderr.on('data', (data) => {
-                    stderrOutput += data.toString().trim() + '\n';
-                    this.emit('log', `[STDERR] ${data.toString().trim()}`);
+                    const text = data.toString().trim();
+                    stderrOutput += text + '\n';
+                    this.emit('log', `[STDERR] ${text}`);
                 });
 
                 this.process.on('error', (error) => {
-                    this.running = false;
-                    this.startTime = null;
-                    clearTimeout(startTimeout);
-                    this.stopStatsPolling();
-                    if (!started) { started = true; reject(error); }
+                    this.emit('log', `[ERROR] Xray process hatası: ${error.message}`);
+                    settle(false, error);
+                    this._cleanup();
                 });
 
                 this.process.on('close', (code) => {
-                    this.running = false;
-                    this.startTime = null;
-                    this.stopStatsPolling();
-                    if (!started) {
-                        started = true;
-                        clearTimeout(startTimeout);
-                        if (code !== 0) reject(new Error(stderrOutput.trim() || `Xray exited: ${code}`));
+                    this.emit('log', `Xray process kapandı (code: ${code})`);
+
+                    // If not yet settled (startup phase), reject
+                    if (!settled) {
+                        settle(false, new Error(stderrOutput.trim() || `Xray çıkış kodu: ${code}`));
+                    }
+
+                    // If was running and not intentionally stopped, emit unexpected-exit
+                    const wasRunning = this.running;
+                    this._cleanup();
+
+                    if (wasRunning && !this._stopping) {
+                        this.emit('log', 'Xray beklenmedik şekilde kapandı!');
+                        this.emit('unexpected-exit', code);
                     }
                 });
             });
@@ -125,45 +154,90 @@ class XrayManager extends EventEmitter {
         }
     }
 
-    startStatsPolling() {
-        this.stopStatsPolling();
+    /**
+     * Clean up all state after process exit
+     */
+    _cleanup() {
+        this.running = false;
+        this.startTime = null;
+        this.process = null;
+        this._stopStatsPolling();
+    }
+
+    /**
+     * Kill the xray process forcefully
+     */
+    _killProcess() {
+        if (!this.process) return;
+        try {
+            if (process.platform === 'win32') {
+                spawn('taskkill', ['/pid', this.process.pid.toString(), '/f', '/t'], { windowsHide: true });
+            } else {
+                this.process.kill('SIGKILL');
+            }
+        } catch (e) {
+            this.emit('log', `Kill hatası: ${e.message}`);
+        }
+    }
+
+    // ========== STATS POLLING ==========
+    _startStatsPolling() {
+        this._stopStatsPolling();
         this.lastStats = { up: 0, down: 0, time: Date.now() };
         this.statsInterval = setInterval(() => {
             if (!this.running) return;
-            this.queryStats();
+            this._queryStats();
         }, 1000);
     }
 
-    stopStatsPolling() {
+    _stopStatsPolling() {
         if (this.statsInterval) {
             clearInterval(this.statsInterval);
             this.statsInterval = null;
         }
+        this.lastStats = null;
     }
 
-    queryStats() {
+    _queryStats() {
         try {
             const binaryPath = this.getXrayBinaryPath();
             const binaryDir = path.dirname(binaryPath);
 
             const apiProcess = spawn(binaryPath, ['api', 'statsquery', '--server=127.0.0.1:10085'], {
                 cwd: binaryDir,
+                windowsHide: true,
             });
 
             let output = '';
+            let killed = false;
+
+            // Timeout: kill the stats query process after 3 seconds
+            const queryTimeout = setTimeout(() => {
+                if (!killed) {
+                    killed = true;
+                    try { apiProcess.kill(); } catch (e) { }
+                }
+            }, 3000);
+
             apiProcess.stdout.on('data', (data) => { output += data.toString(); });
+
             apiProcess.on('close', (code) => {
+                clearTimeout(queryTimeout);
                 if (code === 0 && output.trim()) {
                     try {
-                        this.processStats(JSON.parse(output));
+                        this._processStats(JSON.parse(output));
                     } catch (e) { }
                 }
+            });
+
+            apiProcess.on('error', () => {
+                clearTimeout(queryTimeout);
             });
         } catch (e) { }
     }
 
-    processStats(data) {
-        if (!data || !data.stat) return;
+    _processStats(data) {
+        if (!data || !data.stat || !this.lastStats) return;
         let up = 0, down = 0;
 
         data.stat.forEach(item => {
@@ -190,34 +264,43 @@ class XrayManager extends EventEmitter {
         });
     }
 
+    // ========== STOP ==========
     async stop() {
         if (!this.process || !this.running) {
-            this.running = false;
-            this.stopStatsPolling();
+            this._cleanup();
             return;
         }
 
-        return new Promise((resolve) => {
-            this.process.on('close', () => {
-                this.running = false;
-                this.startTime = null;
-                this.process = null;
-                this.stopStatsPolling();
-                resolve();
-            });
+        this._stopping = true;
 
+        return new Promise((resolve) => {
+            let resolved = false;
+            const done = () => {
+                if (resolved) return;
+                resolved = true;
+                this._cleanup();
+                this._stopping = false;
+                resolve();
+            };
+
+            // Listen for the close event
+            this.process.on('close', done);
+
+            // Try graceful kill first
             if (process.platform === 'win32') {
-                spawn('taskkill', ['/pid', this.process.pid, '/f', '/t']);
+                spawn('taskkill', ['/pid', this.process.pid.toString(), '/f', '/t'], { windowsHide: true });
             } else {
-                this.process.kill('SIGTERM');
+                try { this.process.kill('SIGTERM'); } catch (e) { }
             }
 
+            // Force kill after 3 seconds
             setTimeout(() => {
-                if (this.process) {
+                if (!resolved && this.process) {
                     try { this.process.kill('SIGKILL'); } catch (e) { }
                 }
-                resolve();
-            }, 5000);
+                // Final safety: resolve after 5 seconds regardless
+                setTimeout(done, 2000);
+            }, 3000);
         });
     }
 

@@ -1,5 +1,6 @@
 node_modules/
 dist/
 resources/xray/
+resources/icons/
 *.exe
 auth.json

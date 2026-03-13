@@ -1,5 +1,31 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Helper: create a one-time removable listener
+function createListener(channel) {
+    const listeners = new Set();
+    return {
+        on: (callback) => {
+            const handler = (event, ...args) => callback(...args);
+            listeners.add(handler);
+            ipcRenderer.on(channel, handler);
+        },
+        removeAll: () => {
+            listeners.forEach(handler => {
+                ipcRenderer.removeListener(channel, handler);
+            });
+            listeners.clear();
+        }
+    };
+}
+
+// Pre-create all listener managers
+const authStatusListener = createListener('auth-status');
+const connectionStatusListener = createListener('connection-status');
+const connectionErrorListener = createListener('connection-error');
+const trafficUpdateListener = createListener('traffic-update');
+const limitExceededListener = createListener('limit-exceeded');
+const usageUpdateListener = createListener('usage-update');
+
 contextBridge.exposeInMainWorld('mebAPI', {
     // Auth
     googleSignIn: () => ipcRenderer.invoke('auth:google-signin'),
@@ -20,31 +46,29 @@ contextBridge.exposeInMainWorld('mebAPI', {
     moveDrag: (x, y) => ipcRenderer.invoke('window:drag-move', { x, y }),
     endDrag: () => ipcRenderer.invoke('window:end-drag'),
 
-    // Usage Polling Control
+    // Usage
     startPolling: () => ipcRenderer.invoke('usage:start-polling'),
     stopPolling: () => ipcRenderer.invoke('usage:stop-polling'),
+    refreshUsage: () => ipcRenderer.invoke('usage:refresh'),
 
     // Platform
     platform: process.platform,
 
     // Events from main process
-    onAuthStatus: (callback) => {
-        ipcRenderer.on('auth-status', (event, data) => callback(data));
+    onAuthStatus: (callback) => authStatusListener.on(callback),
+    onConnectionStatus: (callback) => connectionStatusListener.on(callback),
+    onConnectionError: (callback) => connectionErrorListener.on(callback),
+    onTrafficUpdate: (callback) => trafficUpdateListener.on(callback),
+    onLimitExceeded: (callback) => limitExceededListener.on(callback),
+    onUsageUpdate: (callback) => usageUpdateListener.on(callback),
+
+    // Cleanup: remove all listeners (call on page unload)
+    removeAllListeners: () => {
+        authStatusListener.removeAll();
+        connectionStatusListener.removeAll();
+        connectionErrorListener.removeAll();
+        trafficUpdateListener.removeAll();
+        limitExceededListener.removeAll();
+        usageUpdateListener.removeAll();
     },
-    onConnectionStatus: (callback) => {
-        ipcRenderer.on('connection-status', (event, status) => callback(status));
-    },
-    onConnectionError: (callback) => {
-        ipcRenderer.on('connection-error', (event, error) => callback(error));
-    },
-    onTrafficUpdate: (callback) => {
-        ipcRenderer.on('traffic-update', (event, data) => callback(data));
-    },
-    onLimitExceeded: (callback) => {
-        ipcRenderer.on('limit-exceeded', (event, message) => callback(message));
-    },
-    onUsageUpdate: (callback) => {
-        ipcRenderer.on('usage-update', (event, data) => callback(data));
-    },
-    refreshUsage: () => ipcRenderer.invoke('usage:refresh'),
 });

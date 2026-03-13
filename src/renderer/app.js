@@ -2,12 +2,13 @@
 
 class MEBVPNApp {
     constructor() {
-        this.isConnected = false;
-        this.isConnecting = false;
+        // Connection state — single source of truth from IPC events
+        this.connectionState = 'disconnected'; // 'disconnected' | 'connecting' | 'connected'
         this.limitExceeded = false;
         this.connectionStartTime = null;
         this.timerInterval = null;
         this.particleInterval = null;
+        this.connectingTimeout = null;
         this.user = null;
 
         this.initElements();
@@ -75,45 +76,36 @@ class MEBVPNApp {
         const isLinux = window.mebAPI.platform === 'linux';
 
         if (!isLinux) {
-            // Windows/macOS: use native CSS drag
             titlebar.style.webkitAppRegion = 'drag';
             controls.style.webkitAppRegion = 'no-drag';
             return;
         }
 
-        // Linux: Optimized JS-based drag for smart board / touch compatibility
         let dragStartX = 0;
         let dragStartY = 0;
         let dragActive = false;
-        let dragThreshold = 5; // pixels before drag starts (prevents accidental drags)
+        let dragThreshold = 5;
         let dragStarted = false;
         let rafId = null;
         let lastMoveX = 0;
         let lastMoveY = 0;
 
-        // Prevent default touch behaviors on titlebar
         titlebar.style.touchAction = 'none';
         titlebar.style.userSelect = 'none';
         titlebar.style.webkitUserSelect = 'none';
 
         const startDrag = (x, y, e) => {
-            // Don't drag if clicking on buttons
             if (e.target.closest('#titlebar-controls')) return;
-
             dragActive = true;
             dragStarted = false;
             dragStartX = x;
             dragStartY = y;
-
-            // Prevent text selection during drag
             document.body.style.userSelect = 'none';
             document.body.style.webkitUserSelect = 'none';
         };
 
         const moveDrag = (x, y) => {
             if (!dragActive) return;
-
-            // Check threshold before starting actual drag
             if (!dragStarted) {
                 const dx = Math.abs(x - dragStartX);
                 const dy = Math.abs(y - dragStartY);
@@ -121,8 +113,6 @@ class MEBVPNApp {
                 dragStarted = true;
                 window.mebAPI.startDrag(dragStartX, dragStartY);
             }
-
-            // Throttle with requestAnimationFrame for smooth movement
             lastMoveX = x;
             lastMoveY = y;
             if (!rafId) {
@@ -139,65 +129,37 @@ class MEBVPNApp {
             if (!dragActive) return;
             dragActive = false;
             dragStarted = false;
-
-            if (rafId) {
-                cancelAnimationFrame(rafId);
-                rafId = null;
-            }
-
+            if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
             window.mebAPI.endDrag();
-
-            // Restore text selection
             document.body.style.userSelect = '';
             document.body.style.webkitUserSelect = '';
         };
 
-        // Pointer events (unified mouse + touch + pen)
         if (window.PointerEvent) {
             titlebar.addEventListener('pointerdown', (e) => {
                 if (e.target.closest('#titlebar-controls')) return;
                 titlebar.setPointerCapture(e.pointerId);
                 startDrag(e.screenX, e.screenY, e);
             });
-
-            titlebar.addEventListener('pointermove', (e) => {
-                moveDrag(e.screenX, e.screenY);
-            });
-
-            titlebar.addEventListener('pointerup', (e) => {
-                titlebar.releasePointerCapture(e.pointerId);
-                endDrag();
-            });
-
-            titlebar.addEventListener('pointercancel', (e) => {
-                titlebar.releasePointerCapture(e.pointerId);
-                endDrag();
-            });
+            titlebar.addEventListener('pointermove', (e) => moveDrag(e.screenX, e.screenY));
+            titlebar.addEventListener('pointerup', (e) => { titlebar.releasePointerCapture(e.pointerId); endDrag(); });
+            titlebar.addEventListener('pointercancel', (e) => { titlebar.releasePointerCapture(e.pointerId); endDrag(); });
         } else {
-            // Fallback: separate mouse + touch events
-            titlebar.addEventListener('mousedown', (e) => {
-                startDrag(e.screenX, e.screenY, e);
-            });
-            document.addEventListener('mousemove', (e) => {
-                moveDrag(e.screenX, e.screenY);
-            });
+            titlebar.addEventListener('mousedown', (e) => startDrag(e.screenX, e.screenY, e));
+            document.addEventListener('mousemove', (e) => moveDrag(e.screenX, e.screenY));
             document.addEventListener('mouseup', endDrag);
-
             titlebar.addEventListener('touchstart', (e) => {
-                if (e.touches.length === 1) {
-                    startDrag(e.touches[0].screenX, e.touches[0].screenY, e);
-                }
+                if (e.touches.length === 1) startDrag(e.touches[0].screenX, e.touches[0].screenY, e);
             }, { passive: true });
             document.addEventListener('touchmove', (e) => {
-                if (e.touches.length === 1) {
-                    moveDrag(e.touches[0].screenX, e.touches[0].screenY);
-                }
+                if (e.touches.length === 1) moveDrag(e.touches[0].screenX, e.touches[0].screenY);
             }, { passive: true });
             document.addEventListener('touchend', endDrag);
             document.addEventListener('touchcancel', endDrag);
         }
     }
 
+    // ========== IPC LISTENERS (Single source of truth for state) ==========
     initIPCListeners() {
         window.mebAPI.onAuthStatus((data) => {
             if (data.loggedIn) {
@@ -208,21 +170,37 @@ class MEBVPNApp {
             }
         });
 
+        // THIS is the single source of truth for connection state
         window.mebAPI.onConnectionStatus((status) => {
+            this._clearConnectingTimeout();
+
             switch (status) {
-                case 'connected': this.setConnectedState(); break;
-                case 'disconnected': this.setDisconnectedState(); break;
-                case 'connecting': break;
+                case 'connected':
+                    this.connectionState = 'connected';
+                    this._applyConnectedUI();
+                    break;
+                case 'disconnected':
+                    this.connectionState = 'disconnected';
+                    this._applyDisconnectedUI();
+                    break;
+                case 'connecting':
+                    this.connectionState = 'connecting';
+                    this._applyConnectingUI();
+                    // Safety: if stuck in connecting for 30s, force disconnect
+                    this._startConnectingTimeout();
+                    break;
             }
         });
 
         window.mebAPI.onTrafficUpdate((data) => this.updateTrafficUI(data));
-        window.mebAPI.onConnectionError((error) => this.showError(error));
+
+        window.mebAPI.onConnectionError((error) => {
+            this.showError(error);
+        });
 
         window.mebAPI.onLimitExceeded((message) => {
             this.limitExceeded = true;
             this.showLimitExceededWarning(message);
-            this.setDisconnectedState();
         });
 
         window.mebAPI.onUsageUpdate((data) => {
@@ -237,6 +215,12 @@ class MEBVPNApp {
             if (session.loggedIn) {
                 this.user = session.user;
                 this.showDashboard();
+                // Also sync VPN status in case app was restarted while connected
+                const status = await window.mebAPI.getStatus();
+                if (status.connected) {
+                    this.connectionState = 'connected';
+                    this._applyConnectedUI();
+                }
             } else {
                 this.showLogin();
             }
@@ -287,7 +271,6 @@ class MEBVPNApp {
         this.viewLogin.classList.remove('active');
         this.viewDashboard.classList.add('active');
         this.updateUserUI();
-        // Start polling for usage data every 2 seconds
         window.mebAPI.startPolling();
     }
 
@@ -339,64 +322,37 @@ class MEBVPNApp {
 
     // ========== VPN CONNECTION ==========
     async toggleConnection() {
-        if (this.isConnecting) return;
+        // Prevent double-click
+        if (this.connectionState === 'connecting') return;
 
-        // If limit was previously exceeded, re-check from server before blocking
-        if (this.limitExceeded && !this.isConnected) {
+        // If limit was previously exceeded, re-check from server
+        if (this.limitExceeded && this.connectionState === 'disconnected') {
             try {
                 const usage = await window.mebAPI.refreshUsage();
                 if (usage) {
                     this.updateUsageFromServer(usage);
                 }
-                // If still exceeded after fresh check, block
                 if (this.limitExceeded) {
                     this.showLimitExceededWarning('Veri limitiniz doldu! Bağlantı kurulamaz.');
                     return;
                 }
-            } catch (e) {
-                // If check fails, try to connect anyway
-            }
+            } catch (e) { }
         }
 
         this.triggerRipple();
 
-        if (this.isConnected) {
-            await this.disconnect();
+        if (this.connectionState === 'connected') {
+            this.triggerScreenFlash('flash-disconnect');
+            // Send disconnect command — state will update via IPC event
+            window.mebAPI.disconnect();
         } else {
-            await this.connect();
+            // Send connect command — state will update via IPC event
+            window.mebAPI.connect();
         }
     }
 
-    async connect() {
-        this.setConnectingState();
-        try {
-            const result = await window.mebAPI.connect();
-            if (result.success) {
-                this.setConnectedState();
-            } else {
-                this.setDisconnectedState();
-                this.showError(result.error || 'Bağlantı kurulamadı');
-            }
-        } catch (error) {
-            this.setDisconnectedState();
-            this.showError(error.message || 'Bağlantı hatası');
-        }
-    }
-
-    async disconnect() {
-        this.triggerScreenFlash('flash-disconnect');
-        try {
-            await window.mebAPI.disconnect();
-            this.setDisconnectedState();
-        } catch (error) {
-            this.setDisconnectedState();
-        }
-    }
-
-    // ========== STATE MANAGEMENT ==========
-    setConnectingState() {
-        this.isConnecting = true;
-        this.isConnected = false;
+    // ========== UI STATE METHODS ==========
+    _applyConnectingUI() {
         document.body.className = 'connecting';
         this.statusText.textContent = 'Bağlanıyor...';
         this.connectLabel.textContent = 'Bağlantı kuruluyor';
@@ -404,9 +360,7 @@ class MEBVPNApp {
         this.statsGrid.style.display = 'none';
     }
 
-    setConnectedState() {
-        this.isConnected = true;
-        this.isConnecting = false;
+    _applyConnectedUI() {
         this.connectionStartTime = Date.now();
         document.body.className = 'connected';
         this.statusText.textContent = 'Bağlandı';
@@ -419,9 +373,7 @@ class MEBVPNApp {
         this.hideError();
     }
 
-    setDisconnectedState() {
-        this.isConnected = false;
-        this.isConnecting = false;
+    _applyDisconnectedUI() {
         this.connectionStartTime = null;
         document.body.className = '';
         this.statusText.textContent = 'Bağlantı Kesildi';
@@ -432,9 +384,28 @@ class MEBVPNApp {
         this.stopTimer();
     }
 
+    // ========== CONNECTING TIMEOUT ==========
+    _startConnectingTimeout() {
+        this._clearConnectingTimeout();
+        this.connectingTimeout = setTimeout(async () => {
+            if (this.connectionState === 'connecting') {
+                console.warn('Connecting timeout reached (30s), forcing disconnect');
+                this.showError('Bağlantı zaman aşımına uğradı. Lütfen tekrar deneyin.');
+                await window.mebAPI.disconnect();
+            }
+        }, 30000);
+    }
+
+    _clearConnectingTimeout() {
+        if (this.connectingTimeout) {
+            clearTimeout(this.connectingTimeout);
+            this.connectingTimeout = null;
+        }
+    }
+
     // ========== TRAFFIC UI ==========
     updateTrafficUI(data) {
-        if (!this.isConnected) return;
+        if (this.connectionState !== 'connected') return;
         this.downloadSpeed.textContent = this.formatSpeed(data.downSpeed);
         this.uploadSpeed.textContent = this.formatSpeed(data.upSpeed);
         this.totalUsage.textContent = this.formatData(data.total);
@@ -493,7 +464,7 @@ class MEBVPNApp {
         this.stopConnectedParticles();
         for (let i = 0; i < 5; i++) setTimeout(() => this.spawnParticle(), i * 300);
         this.particleInterval = setInterval(() => {
-            if (this.isConnected) this.spawnParticle();
+            if (this.connectionState === 'connected') this.spawnParticle();
         }, 1200);
     }
 
@@ -531,6 +502,8 @@ class MEBVPNApp {
 
     // ========== ERROR ==========
     showError(message) {
+        // Reset any limit-exceeded styling
+        this._resetErrorStyle();
         this.errorText.textContent = message;
         this.errorContainer.style.display = 'block';
         setTimeout(() => this.hideError(), 6000);
@@ -538,6 +511,13 @@ class MEBVPNApp {
 
     hideError() {
         this.errorContainer.style.display = 'none';
+        this._resetErrorStyle();
+    }
+
+    _resetErrorStyle() {
+        this.errorContainer.style.borderColor = '';
+        this.errorContainer.style.background = '';
+        this.errorContainer.style.color = '';
     }
 
     // ========== LIMIT EXCEEDED ==========
@@ -554,7 +534,6 @@ class MEBVPNApp {
     updateUsageFromServer(data) {
         if (!this.user) return;
 
-        // Update local user data
         this.user.period_usage = data.period_usage;
         this.user.current_usage = data.current_usage;
         this.user.data_limit = data.data_limit;
@@ -565,15 +544,14 @@ class MEBVPNApp {
 
         // Check if limit was cleared (e.g. period reset)
         if (!data.limit_exceeded && data.active) {
-            this.limitExceeded = false;
-            this.hideError();
-            // Reset error container style
-            this.errorContainer.style.borderColor = '';
-            this.errorContainer.style.background = '';
-            this.errorContainer.style.color = '';
+            if (this.limitExceeded) {
+                this.limitExceeded = false;
+                this.hideError();
+            }
+        } else if (data.limit_exceeded) {
+            this.limitExceeded = true;
         }
 
-        // Refresh UI
         this.updateUserUI();
     }
 }
